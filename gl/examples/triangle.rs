@@ -20,26 +20,50 @@ use std::ffi::CString;
 use std::mem;
 use std::ptr;
 use std::str;
+use std::time::Instant;
 
 // Vertex data
-static VERTEX_DATA: [GLfloat; 6] = [0.0, 0.5, 0.5, -0.5, -0.5, -0.5];
+static VERTEX_DATA: [GLfloat; 8] = [
+    -1.0, 1.0,
+    -1.0, -1.0,
+    1.0, 1.0,
+    1.0, -1.0
+];
 
 // Shader sources
 static VS_SRC: &'static str = "
 #version 150
-in vec2 position;
+in vec2 in_position;
 
 void main() {
-    gl_Position = vec4(position, 0.0, 1.0);
+    gl_Position = vec4(in_position, 0.0, 1.0);
 }";
 
 static FS_SRC: &'static str = "
 #version 150
+
+uniform vec2 u_resolution;
+uniform float u_time;
 out vec4 out_color;
 
+void mainImage(out vec4 e)
+{
+    vec3 d=.5-vec3(gl_FragCoord.xy,1)/u_resolution.y,p,o;
+    for(int i=0;i<32;i++)
+    {
+        o=p;
+        o.z-=u_time*9.;
+        float a=o.z*.1;
+        o.xy*=mat2(cos(a),sin(a),-sin(a),cos(a));
+        p+=(.1-length(cos(o.xy)+sin(o.yz)))*d;
+    }
+    e=vec4((sin(p)+vec3(2,5,9))/length(p)*vec3(1), 1);
+}
+
 void main() {
-    out_color = vec4(1.0, 1.0, 1.0, 1.0);
-}";
+    mainImage(out_color);
+}
+";
 
 fn compile_shader(src: &str, ty: GLenum) -> GLuint {
     let shader;
@@ -111,6 +135,9 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
 }
 
 fn main() {
+    let now = Instant::now();
+    let time_uniform;
+    let resolution_uniform;
     let event_loop = glutin::event_loop::EventLoop::new();
     let window = glutin::window::WindowBuilder::new();
     let gl_window = glutin::ContextBuilder::new()
@@ -150,8 +177,11 @@ fn main() {
         gl::UseProgram(program);
         gl::BindFragDataLocation(program, 0, CString::new("out_color").unwrap().as_ptr());
 
+        time_uniform = gl::GetUniformLocation(program, CString::new("u_time").unwrap().as_ptr());
+        resolution_uniform = gl::GetUniformLocation(program, CString::new("u_resolution").unwrap().as_ptr());
+
         // Specify the layout of the vertex data
-        let pos_attr = gl::GetAttribLocation(program, CString::new("position").unwrap().as_ptr());
+        let pos_attr = gl::GetAttribLocation(program, CString::new("in_position").unwrap().as_ptr());
         gl::EnableVertexAttribArray(pos_attr as GLuint);
         gl::VertexAttribPointer(
             pos_attr as GLuint,
@@ -166,7 +196,7 @@ fn main() {
     event_loop.run(move |event, _, control_flow| {
         use glutin::event::{Event, WindowEvent};
         use glutin::event_loop::ControlFlow;
-        *control_flow = ControlFlow::Wait;
+        *control_flow = ControlFlow::Poll;
         match event {
             Event::LoopDestroyed => return,
             Event::WindowEvent { event, .. } => match event {
@@ -183,17 +213,21 @@ fn main() {
                 },
                 _ => (),
             },
-            Event::RedrawRequested(_) => {
-                unsafe {
-                    // Clear the screen to black
-                    gl::ClearColor(0.3, 0.3, 0.3, 1.0);
-                    gl::Clear(gl::COLOR_BUFFER_BIT);
-                    // Draw a triangle from the 3 vertices
-                    gl::DrawArrays(gl::TRIANGLES, 0, 3);
-                }
-                gl_window.swap_buffers().unwrap();
-            },
+            // Event::RedrawRequested(_) => {
+            // },
             _ => (),
+        };
+        unsafe {
+            let window_size = gl_window.window().inner_size();
+            // Clear the screen to black
+            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+            // Update uniforms
+            gl::Uniform1f(time_uniform, now.elapsed().as_secs_f32());
+            gl::Uniform2f(resolution_uniform, window_size.width as f32, window_size.height as f32);
+            // Draw a triangle from the 3 vertices
+            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
         }
+        gl_window.swap_buffers().unwrap();
     });
 }
